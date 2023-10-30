@@ -9,6 +9,7 @@ from tqdm import utils
 from torch.utils.data import DataLoader
 
 from .dataset import FishBowl
+from .dataset_no_fm import FishBowlNoFM
 
 
 # one batch contains bz videos data
@@ -25,12 +26,12 @@ def fishbowl_collate_fn(batch):
 
     return new_batch_infos["input_obj_patches"], new_batch_infos
 
-
 def get_dataloader(args, mode):
+    FishBowlDataset = FishBowl if args.dataset == 'FishBowl' else FishBowlNoFM
     if mode == "train":
-        train_set = FishBowl(
+        train_set = FishBowlDataset(
             data_dir="FishBowl_dataset/data/train_data", args=args, mode="train")
-        val_set = FishBowl(
+        val_set = FishBowlDataset(
             data_dir="FishBowl_dataset/data/val_data", args=args, mode="valid")
 
         train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -45,7 +46,7 @@ def get_dataloader(args, mode):
 
         return train_loader, val_loader
     elif mode == "test":
-        test_set = FishBowl(
+        test_set = FishBowlDataset(
             data_dir="FishBowl_dataset/data/test_data", args=args, mode="test")
         test_sampler = torch.utils.data.distributed.DistributedSampler(
             test_set)

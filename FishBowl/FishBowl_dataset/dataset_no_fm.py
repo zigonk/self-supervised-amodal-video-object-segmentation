@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from skimage import transform
 from pycocotools import _mask as coco_mask
 
-class FishBowl(object):
+class FishBowlNoFM(object):
     def __init__(self, data_dir, args, mode, subtest=None):
         # data_dir "dataset/data/val_data"
         self.datatype = data_dir.split("/")[-1].split("_")[0]
@@ -26,8 +26,9 @@ class FishBowl(object):
         self.test_set = subtest
 
         self.data_summary = pickle.load(
-            open(os.path.join(data_dir, self.datatype+"_data.pkl"), "rb"))
+            open(os.path.join(data_dir, "custom_" + self.datatype+"_data.pkl"), "rb"))
         self.obj_lists = list(self.data_summary.keys())
+
         self.device = "cpu"  # args.device
         self.dtype = args.dtype
 
@@ -40,6 +41,7 @@ class FishBowl(object):
         self.flows_reverse_frames = None
 
         self.enlarge_coef = args.enlarge_coef
+                
 
     def decode2binarymask(self, masks):
         mask = coco_mask.decode(masks)
@@ -54,27 +56,22 @@ class FishBowl(object):
         return len(self.obj_lists) if self.mode != "valid" else len(self.obj_lists) // 2
 
     def __getitem__(self, idx):
-        v_id, obj_id = self.obj_lists[idx].split("_")
+        v_name, obj_id = self.obj_lists[idx].split("_")
 
-        if v_id != self.cur_vid:
+        if v_name != self.cur_vid:
             # print("read video ", idx)
-            self.video_frames = self.getImg(v_id)
-            self.flows_frames = self.getFlow(self.flow_path, v_id, 1)
+            self.video_frames = self.getImg(v_name)
+            self.flows_frames = self.getFlow(self.flow_path, v_name, 1)
             self.flows_reverse_frames = self.getFlow(
-                self.flow_reverse_path, v_id, -1)
-            self.cur_vid = v_id
+                self.flow_reverse_path, v_name, -1)
+            self.cur_vid = v_name
         video_frames = self.video_frames
         flows_frames = self.flows_frames
         flows_reverse_frames = self.flows_reverse_frames
 
         obj_patches = []
-        fm_labels_crop = []
-        fm_labels_no_crop = []
         obj_position = []
         counts = []
-        fm_bx = []
-        next_fm_bx = []
-        occluded_ratio = []
         vm_crop = []
         vm_no_crop = []
         flows_crop = []
@@ -97,25 +94,16 @@ class FishBowl(object):
             end_t = start_t + self.seq_len - 1
 
         for t_step in range(start_t, end_t+1):
+            # get visible mask and box
+            vy_min, vx_min, vw, vh = obj_dict[t_step]["VM_bx"] # x,y,w,h -> y,x,w,h 
+            vx_max = vx_min + vw
+            vy_max = vy_min + vh
+            # Convert to int
+            vx_min = int(vx_min)
+            vx_max = int(vx_max)
+            vy_min = int(vy_min)
+            vy_max = int(vy_max)
 
-            # get full mask label
-            fm = self.decode2binarymask(obj_dict[t_step]["FM"])[0]  # 320, 480
-            x_min, x_max, y_min, y_max = obj_dict[t_step]["FM_bx"]
-            x_center = (x_min + x_max) // 2
-            y_center = (y_min + y_max) // 2
-            x_len = int((x_max - x_min) * self.enlarge_coef)
-            y_len = int((y_max - y_min) * self.enlarge_coef)
-            x_min = max(0, x_center - x_len // 2)
-            x_max = min(320, x_center + x_len // 2)
-            y_min = max(0, y_center - y_len // 2)
-            y_max = min(480, y_center + y_len // 2)
-
-            fm_bx.append([x_min, x_max, y_min, y_max])
-            fm_labels_crop.append(fm[x_min:x_max+1, y_min:y_max+1])
-            fm_labels_no_crop.append(fm)
-
-            # get visible mask
-            vx_min, vx_max, vy_min, vy_max = obj_dict[t_step]["VM_bx"]
             # print(vx_min, vx_max, vy_min, vy_max)
             # enlarge the bbox
             x_center = (vx_min + vx_max) // 2
@@ -133,8 +121,9 @@ class FishBowl(object):
             vm_no_crop.append(vm)
 
             # get loss mask
-            loss_mask_weight.append(self.decode2binarymask(
-                obj_dict[t_step]["loss_mask_weight"])[0])
+            # loss_mask_weight.append(self.decode2binarymask(
+            #     obj_dict[t_step]["loss_mask_weight"])[0])
+            loss_mask_weight.append(np.ones((vm.shape[0], vm.shape[1])))
 
             # get patches and flow crop
             patch = video_frames[t_step][vx_min:vx_max+1, vy_min:vy_max+1]
@@ -149,7 +138,7 @@ class FishBowl(object):
             flows_reverse_nocrop.append(flows_reverse_frames[t_step])
 
             # for evaluation
-            video_ids.append(int(v_id))
+            video_ids.append(int(v_name))
             object_ids.append(int(obj_id))
             frame_ids.append(t_step)
             counts.append(1)
@@ -157,10 +146,6 @@ class FishBowl(object):
             # if self.mode != "test":
             num_pad = self.seq_len - (end_t - start_t + 1)
             for _ in range(num_pad):
-                fm_bx.append(copy.deepcopy(fm_bx[-1]))
-                fm_labels_crop.append(copy.deepcopy(fm_labels_crop[-1]))
-                fm_labels_no_crop.append(copy.deepcopy(fm_labels_no_crop[-1]))
-
                 obj_position.append(copy.deepcopy(obj_position[-1]))
                 vm_crop.append(copy.deepcopy(vm_crop[-1]))
                 vm_no_crop.append(copy.deepcopy(vm_no_crop[-1]))
@@ -180,24 +165,17 @@ class FishBowl(object):
                 frame_ids.append(frame_ids[-1] + 1)
                 counts.append(0)
 
-        next_fm_bx = fm_bx[1:] + fm_bx[-1:]
         obj_position = torch.from_numpy(
             np.array(obj_position)).to(self.dtype).to(self.device)
         counts = torch.from_numpy(np.array(counts)).to(
             self.dtype).to(self.device)
-        fm_bx = torch.from_numpy(np.array(fm_bx)).to(
-            self.dtype).to(self.device)
-        next_fm_bx = torch.from_numpy(np.array(next_fm_bx)).to(
-            self.dtype).to(self.device)
         loss_mask_weight = torch.from_numpy(
             np.array(loss_mask_weight)).to(self.dtype).to(self.device)
 
-        assert len(fm_labels_crop) > 0
         # the patch, visible mask and flow crop of objects are in the same scale
         # while the full mask is not
         vm_term, obj_patches, flows_crop, flows_reverse_crop = self.rescale(
             vm_crop, obj_patches, flows_crop, flows_reverse_crop)
-        fm_labels_crop = self.fm_rescale(fm_labels_crop)
 
         # Seq_len * patch_h * patch_w * 3
         obj_temp = np.stack(obj_patches, axis=0)
@@ -213,15 +191,12 @@ class FishBowl(object):
             obj_patches).to(self.dtype).to(self.device)
         vm_no_crop = torch.from_numpy(np.array(vm_no_crop)).to(
             self.dtype).to(self.device)
-        fm_labels_no_crop = torch.from_numpy(
-            np.array(fm_labels_no_crop)).to(self.dtype).to(self.device)
+
         flows_no_crop = torch.from_numpy(
             np.array(flows_no_crop)).to(self.dtype).to(self.device)
         flows_reverse_no_crop = torch.from_numpy(
             np.array(flows_reverse_nocrop)).to(self.dtype).to(self.device)
-        fm_labels_crop = np.stack(fm_labels_crop, axis=0)
-        fm_labels_crop = torch.from_numpy(
-            np.array(fm_labels_crop)).to(self.dtype).to(self.device)
+
 
         video_ids = torch.from_numpy(np.array(video_ids)).to(
             self.dtype).to(self.device)
@@ -233,21 +208,15 @@ class FishBowl(object):
         # one batch contains bz videos data
         # each video data contains num_obj fish object
         # each object is a dict with patches(6 channels),
-        # visible mask crop, flow crop, obj_position, fm_labels, occlued ratios
+        # visible mask crop, flow crop, obj_position, occlued ratios
         # only variables be used in calculate the grad will be set to tensor.
-
-        print(object_ids)
 
         obj_data = {"input_obj_patches": obj_patches,
                     "vm_nocrop": vm_no_crop,
                     "obj_position": obj_position,
-                    "fm_bx": fm_bx,
-                    # "next_fm_bx": next_fm_bx,
                     "flows_nocrop": flows_no_crop,
                     "flows_reverse_nocrop": flows_reverse_no_crop,
                     "loss_mask": loss_mask_weight,
-                    "fm_labels_crop": fm_labels_crop,
-                    "full_mask": fm_labels_no_crop,
                     "counts": counts,
                     "video_ids": video_ids,
                     "object_ids": object_ids,
@@ -255,20 +224,6 @@ class FishBowl(object):
                     }
 
         return obj_data
-
-    def fm_rescale(self, masks):
-
-        for i, m in enumerate(masks):
-            if m is None:
-                continue
-            h, w = masks[i].shape[:2]
-            m = transform.rescale(m, (self.patch_h/h, self.patch_w/w))
-            cur_h, cur_w = m.shape[:2]
-            to_pad = ((0, max(self.patch_h-cur_h, 0)),
-                      (0, max(self.patch_w-cur_w, 0)))
-            m = np.pad(m, to_pad)[:self.patch_h, :self.patch_w]
-            masks[i] = m
-        return masks
 
     def rescale(self, masks, obj_patches=None, flows=None, flows_reverse=None):
         mask_count = [np.sum(m) if m is not None else 0 for m in masks]

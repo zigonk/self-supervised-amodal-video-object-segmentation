@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
+import json
 import os
 import sys
 import argparse
@@ -162,6 +163,11 @@ def test(test_dataloader, model, args):
     test_iou = np.array(0).astype(np.float32)
     test_iou_count = np.array(0).astype(np.float32)
 
+    # Load vm predictions
+    predictions = json.load(open(os.path.join(args.vm_pred_path), "r"))
+    # Sort the predictions to make object_id matching with the order of predictions
+    predictions.sort(key=lambda x: x["video_id"])
+
     with torch.no_grad():
         loop = tqdm(test_dataloader) if not args.verbose and dist.get_rank(
         ) == 0 else test_dataloader
@@ -169,25 +175,38 @@ def test(test_dataloader, model, args):
             test_batch_count += 1
             obj_patches = obj_patches.to(args.device)
             bz = len(obj_patches)
-            loss_eval = model(obj_patches, infos, None, test_batch_count)
+            pred, loss_eval = model(obj_patches, infos, None, test_batch_count, return_pred=True)
+            pred = pred.cpu().numpy()
+            for i in range(bz):
+                object_id = int(infos["object_ids"][i][0])
+                # Update vm_prediction with amodal_pred
+                update_masks(predictions, pred[i], object_id)
+            break
+    
+    # Save predictions to json file
+    if dist.get_rank() == 0:
+        with open(args.vm_pred_path.replace('.json', '_amodal.json') , "w") as f:
+            json.dump(predictions, f)
 
-            test_loss += reduce_tensors(loss_eval["loss_total"]).item() * bz
-            test_iou += reduce_tensors(loss_eval["iou"]).item()
-            test_iou_count += reduce_tensors(loss_eval["iou_count"]).item()
 
-            if args.verbose:
-                print(
-                    "\t".join([k + ":" + f"{v.item():.3f}" for k, v in loss_eval.items()]))
-                print("iou: %.4f" %
-                      (loss_eval["iou"].item() / loss_eval["iou_count"].item()))
+            # SKIP EVALUTATION
+            # test_loss += reduce_tensors(loss_eval["loss_total"]).item() * bz
+            # test_iou += reduce_tensors(loss_eval["iou"]).item()
+            # test_iou_count += reduce_tensors(loss_eval["iou_count"]).item()
 
-        print("IoU: %.4f" % (test_iou / test_iou_count))
+            # if args.verbose:
+            #     print(
+            #         "\t".join([k + ":" + f"{v.item():.3f}" for k, v in loss_eval.items()]))
+            #     print("iou: %.4f" %
+            #           (loss_eval["iou"].item() / loss_eval["iou_count"].item()))
+
+        # print("IoU: %.4f" % (test_iou / test_iou_count))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_path', type=str, default="")
-    parser.add_argument('--dataset', type=str, default="FishBowl")
+    parser.add_argument('--dataset', type=str, default="FishBowl_nofm") # FishBowl or FishBowl_nofm
     parser.add_argument("--mode", type=str, default="train")
     parser.add_argument("--log_path", type=str, default="debug_log")
 
@@ -221,9 +240,12 @@ if __name__ == "__main__":
     parser.add_argument("--local_rank", default=-1, type=int,
                         help="node rank for distributed training")
 
+    parser.add_argument("--vm_pred_path", type=str, default="FishBowl_dataset/data/test_data/a2vis/visible/results.json")
+    
     args = parser.parse_args()
 
     set_seed(args.seed)
+    os.makedirs(args.log_path, exist_ok=True)
 
     if args.mode == "train":
         dist.init_process_group(backend="nccl")
@@ -262,20 +284,21 @@ if __name__ == "__main__":
         # model = torch.load(os.path.join(args.log_path,"best_model.pt"))
 
         test(test_loader, model, args)
-        dataframe = pd.DataFrame.from_dict(model.module.save_eval_dict)
-        dataframe.to_csv(os.path.join(args.log_path, '%s_%s.csv' %
-                         (args.trainning_method, dist.get_rank())))
+        # SKIP EVALUTATION
+        # dataframe = pd.DataFrame.from_dict(model.module.save_eval_dict)
+        # dataframe.to_csv(os.path.join(args.log_path, '%s_%s.csv' %
+        #                  (args.training_method, dist.get_rank())))
 
-        if dist.get_rank() == 0:
-            dfs = []
-            for i in range(4):
-                dfs.append(pd.read_csv(os.path.join(args.log_path,
-                           '%s_%s.csv' % (args.training_method, i))))
-            dfs = pd.concat(dfs, axis=0)
-            print("====Evaluation====")
-            print("====Metric1: (in paper)====")
-            print_res(dfs, "IoU", "metric1")
-            print_res(dfs, "invisible_IoU", "metric1")
-            print("====Metric2====")
-            print_res(dfs, "IoU", "metric2")
-            print_res(dfs, "invisible_IoU", "metric2")
+        # if dist.get_rank() == 0:
+        #     dfs = []
+        #     for i in range(4):
+        #         dfs.append(pd.read_csv(os.path.join(args.log_path,
+        #                    '%s_%s.csv' % (args.training_method, i))))
+        #     dfs = pd.concat(dfs, axis=0)
+        #     print("====Evaluation====")
+        #     print("====Metric1: (in paper)====")
+        #     print_res(dfs, "IoU", "metric1")
+        #     print_res(dfs, "invisible_IoU", "metric1")
+        #     print("====Metric2====")
+        #     print_res(dfs, "IoU", "metric2")
+        #     print_res(dfs, "invisible_IoU", "metric2")
