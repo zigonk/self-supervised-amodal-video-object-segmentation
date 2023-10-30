@@ -5,6 +5,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from utils.utils import visualize_mask
+
 from .encoder import SpatialTemproalEncoder
 from .decoder import MaskDecoder, FlowDecoder
 from utils.warp import warp
@@ -241,13 +243,13 @@ class SavosModel(nn.Module):
         loss_consist /= bz
         return loss_consist
 
-    def forward(self, obj_patches_all, infos, writer, batch_count):
+    def forward(self, obj_patches_all, infos, writer, batch_count, return_pred=False):
         device = obj_patches_all[0].device
         # all only mask
         if self.dataset == "FishBowl":
             gt_objs_VM, gt_objs_FM, vm_bx, flow_nocrop, flow_reverse_nocrop, loss_mask, counts = self.get_infos(
                 infos, device)
-        elif self.dataset == "Kins_Car":
+        elif self.dataset == "Kins_Car" or self.dataset == "FishBowl_nofm":
             gt_objs_VM, vm_bx, flow_nocrop, flow_reverse_nocrop, loss_mask, counts = self.get_infos(
                 infos, device)
         obj_patches_foward = obj_patches_all[..., :6]
@@ -311,11 +313,12 @@ class SavosModel(nn.Module):
             loss_eval = self.fish_loss_and_evaluation(pred_objs_FM, gt_objs_FM,
                                                       gt_objs_VM, loss_mask,
                                                       loss_consist, counts, infos, loss_photomatric)
-        elif self.dataset == "Kins_Car":
+        elif self.dataset == "Kins_Car" or self.dataset == "FishBowl_nofm":
             loss_eval = self.kins_loss_and_evaluation(pred_objs_FM, gt_objs_VM,
                                                       loss_mask, loss_consist,
                                                       counts, infos)
-
+        if return_pred:
+            return pred_objs_FM, loss_eval
         return loss_eval
 
     def get_infos(self, info, device):
@@ -330,7 +333,7 @@ class SavosModel(nn.Module):
             full_masks = info["full_mask"]
             fm_bx = info["fm_bx"]
             return visible_masks, full_masks, vm_bx, flow_nocrop, flow_reverse_nocrop, loss_mask, counts
-        elif self.dataset == "Kins_Car":
+        elif self.dataset == "Kins_Car" or self.dataset == "FishBowl_nofm":
             return visible_masks, vm_bx, flow_nocrop, flow_reverse_nocrop, loss_mask, counts
 
     # For FishBowl

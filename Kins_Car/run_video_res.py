@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
+from utils.utils import *
 import os
 import sys
 import pickle as pkl
@@ -15,7 +16,6 @@ import matplotlib.colors as colors
 import matplotlib.cm as cmx
 
 sys.path.append("../")
-from utils.utils import *
 
 
 def get_color_dict(max_num):

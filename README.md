@@ -10,7 +10,7 @@ The data provided includes raw video data, predicted visible masks obtained by P
 
 # Set up
 ```bash
-pip install -r requirement.txt
+conda create env -f environment.yml
 ```
 
 
@@ -22,17 +22,30 @@ Down the [test data](https://dgl-data.s3.us-west-2.amazonaws.com/dataset/SaVos_r
 ### Download the csv for evaluation
 We currently filter the data (e.g. filtered by Occ rate as described in paper) and write into csv, to evalute, please download the [test file](https://dgl-data.s3.us-west-2.amazonaws.com/dataset/SaVos_release/test_files.zip)
 
-
 ```bash
-mv PATH_TO_TEST_DATA VideoAmodal/FishBowl/FishBowl_dataset/data/test_data
-mv PATH_TO_CHECKPOINT VideoAmodal/FishBowl/log_bidirectional_consist_next_vm_label_1.5bbox_finalconsist/best_model.pt
-mv PATH_TO_TEST_FILES VideoAmodal/FishBowl/test_files
+mv PATH_TO_TEST_DATA FishBowl/FishBowl_dataset/data/test_data
+mv PATH_TO_CHECKPOINT FishBowl/log_bidirectional_consist_next_vm_label_1.5bbox_finalconsist/best_model.pt
+mv PATH_TO_TEST_FILES FishBowl/test_files
 ```
+
+### Construct data summary from custom visible mask
+We provide the script to construct the data summary from the custom visible mask. The custom visible mask is obtained by PointTrack. The script is in construct_data_summary.py. The data summary is used for training and evaluation.
+
+Change the variable `predicted_vm_path` and `mapped_data_info_path` in construct_data_summary.py to your own path. Then run the script by:
+```bash
+python construct_data_summary.py
+```
+It will create a file in `FishBowl/FishBowl_dataset/data/test_data/custom_test_data.pkl`. The file is used for evaluation.
 
 
 
 ### Inference
-
+You can run the inference by:
+```bash
+cd FishBowls
+bash run_inference.sh
+```
+or
 ```bash
 cd FishBowls
 TRAIN_METHOD="bidirectional_consist_next_vm_label_1.5bbox_finalconsist"
@@ -43,6 +56,7 @@ main.py --mode test --training_method ${TRAIN_METHOD} \
 --enlarge_coef 1.5
 ```
 
+You can change the `args.dataset` to `['FishBowl', 'FishBowl_nofm']` to test on the FishBowl dataset with original or custom visible mask.
 
 
 ### Training
